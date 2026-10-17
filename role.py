@@ -175,14 +175,14 @@ async def execute(data: dict, ctx) -> dict:
             "delegate_results": delegate_results
         }
         compiled = prompt.compile(input=text, evidence=json.dumps(evidence_payload, ensure_ascii=False))
+        system_msg = [{"role": "system", "content": compiled}]
+        user_msg = [{"role": "user", "content": json.dumps({"input": text, "evidence": evidence_payload}, ensure_ascii=False)}]
     except Exception:
         return {"decision": "BLOCKED"}
 
     # LLM call
     try:
-        llm_response = await ctx.llm.chat([
-            {"role": "user", "content": compiled}
-        ], prompt=prompt)
+        llm_response = await ctx.llm.chat(system_msg + user_msg, prompt=prompt)
     except Exception:
         return {"decision": "BLOCKED"}
 
