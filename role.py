@@ -5,30 +5,40 @@ from typing import Dict, Any, List
 
 def _parse_repo(text: str) -> str:
     # Match "仓库 <slug>" or "repo <slug>" at word boundary; prefer explicit prefix
-    m = re.search(r"(?:仓库|repo)\s+([a-zA-Z0-9][a-zA-Z0-9\-]{1,39}/[a-zA-Z0-9][a-zA-Z0-9\-]{1,39}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,79})(?:[\s\.,;]|$)", text)
+    # Allow repo slug like "org/repo" or "repo-name", max 79 chars, no leading/trailing hyphens
+    m = re.search(r"(?:仓库|repo)\s+([a-zA-Z0-9][a-zA-Z0-9\-]{0,38}/[a-zA-Z0-9][a-zA-Z0-9\-]{0,38}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,78})(?:[\s\.,;]|$)", text)
     if m:
         candidate = m.group(1)
-        # Reject jobId-like (DF-\d+) or pure digits
-        if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit():
+        # Reject jobId-like (DF-\d+) or pure digits or empty
+        if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit() or not candidate.strip():
             return None
-        return candidate
+        return candidate.strip()
     return None
 
 
 def _parse_runid(text: str) -> str:
     # Must be nonempty string; match digits only after "runId" or "CI runId"
-    m = re.search(r"(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
-    return m.group(1) if m else None
+    # Do NOT match PR number context (e.g., avoid matching "#123" as runId)
+    m = re.search(r"(?i)(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
+    if m:
+        # Ensure it's not embedded in something like "PR #123456789" where digits overlap
+        # Look for absence of '#' before digits in same token context
+        pre = text[:m.start()].rstrip()
+        if pre.endswith('#') or re.search(r'#\s*\d+$', pre[-10:]):
+            return None
+        return m.group(1)
+    return None
 
 
 def _parse_pr_number(text: str) -> str:
     # Strict: only "PR #<digits>", "PR <digits>", or "#<digits>" — no overlap with runId
-    m = re.search(r"(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
+    # Prefer explicit "PR" or "#" prefix to avoid numeric collision
+    m = re.search(r"(?i)(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
     return m.group(1) if m else None
 
 
 def _parse_jobid(text: str) -> str:
-    # Exact DF-\d+ with word boundaries; reject suffixes like DF-0007x
+    # Exact DF-\d+ with word boundaries; reject suffixes like DF-0007x or DF-0007-
     m = re.search(r"\b(DF-\d+)\b", text)
     if m:
         candidate = m.group(1)
