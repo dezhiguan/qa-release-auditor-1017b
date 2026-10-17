@@ -174,7 +174,7 @@ async def execute(data: dict, ctx) -> dict:
             "evidence_sources": evidence_sources,
             "delegate_results": delegate_results
         }
-        compiled = prompt.compile(input=text, evidence=json.dumps(evidence_payload, ensure_ascii=False))
+        compiled = prompt.compile(input=text, evidence="{{evidence}}")
         system_msg = [{"role": "system", "content": compiled}]
         user_msg = [{"role": "user", "content": json.dumps({"input": text, "evidence": evidence_payload}, ensure_ascii=False)}]
     except Exception:
