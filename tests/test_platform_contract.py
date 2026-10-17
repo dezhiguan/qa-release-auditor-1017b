@@ -90,6 +90,17 @@ def test_child_blocked_remains_blocked_when_model_says_pass():
     assert result["decision"] == "BLOCKED"
 
 
+def test_supervisor_pass_retains_tool_child_and_step_evidence():
+    if not DELEGATES or len(TOOLS) < 2:
+        pytest.skip("Multi-tool supervisor contract only")
+    context = Context('{"decision":"PASS"}')
+    result = asyncio.run(execute(_normal_input(), context))
+    assert result["decision"] == "PASS"
+    assert isinstance(result.get("evidence_sources"), list) and len(result["evidence_sources"]) >= 2
+    assert isinstance(result.get("delegate_results"), list) and len(result["delegate_results"]) >= 2
+    assert isinstance(result.get("steps"), list) and result["steps"]
+
+
 @pytest.mark.parametrize("tool,invalid", [
     ("ci.log.fetch", {"log": "", "logsUnavailable": True}),
     ("git.pr.diff", {"diff": "", "number": 1}),
