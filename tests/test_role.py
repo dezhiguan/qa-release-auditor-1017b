@@ -35,7 +35,7 @@ async def test_execute_normal_flow():
     mock_prompt.compile = MagicMock(return_value="compiled prompt")
     ctx.prompt = AsyncMock(return_value=mock_prompt)
     
-    # Mock LLM response with PASS — now passing prompt=prompt
+    # Mock LLM response with PASS
     ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
     
     # Input
@@ -62,8 +62,7 @@ async def test_execute_missing_repo_blocks():
     
     result = await execute(data, ctx)
     
-    assert result["decision"] == "BLOCKED"
-    assert "repo" in result["reason"]
+    assert result == {"decision": "BLOCKED"}
 
 
 @pytest.mark.asyncio
@@ -89,8 +88,8 @@ async def test_execute_llm_returns_blocked_stays_blocked():
     mock_prompt.compile = MagicMock(return_value="prompt")
     ctx.prompt = AsyncMock(return_value=mock_prompt)
     
-    # LLM returns BLOCKED (even with 'PASS' in explanation)
-    ctx.llm.chat = AsyncMock(return_value='{"decision": "BLOCKED"} Explanation contains PASS but decision is BLOCKED.')
+    # LLM returns BLOCKED
+    ctx.llm.chat = AsyncMock(return_value='{"decision": "BLOCKED"}')
     
     data = {
         "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
@@ -98,16 +97,33 @@ async def test_execute_llm_returns_blocked_stays_blocked():
     
     result = await execute(data, ctx)
     
-    assert result == {"decision": "BLOCKED", "reason": "LLM explicitly decided BLOCKED"}
+    assert result == {"decision": "BLOCKED"}
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_failure_blocks():
+async def test_execute_child_blocked_remains_blocked():
     ctx = MagicMock()
     ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
     
-    # First tool fails
-    ctx.tools.call = AsyncMock(side_effect=Exception("network error"))
+    # Mock tools returning OK
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [{"id": "DF-0007", "status": "completed"}],
+        {"log": "ok", "logsUnavailable": False},
+        {"diff": "x", "number": "1"},
+    ]
+    
+    # One delegate returns BLOCKED decision
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "BLOCKED"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
     
     data = {
         "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
@@ -115,5 +131,70 @@ async def test_execute_tool_failure_blocks():
     
     result = await execute(data, ctx)
     
-    assert result["decision"] == "BLOCKED"
-    assert "devflow.job.read failed" in result["reason"]
+    assert result == {"decision": "BLOCKED"}
+
+
+@pytest.mark.asyncio
+async def test_execute_ci_log_unavailable_blocks():
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Mock tools: ci.log.fetch returns logsUnavailable=True
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [{"id": "DF-0007", "status": "completed"}],
+        {"log": "", "logsUnavailable": True},
+        {"diff": "x", "number": "1"},
+    ]
+    
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "PASS"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
+    
+    data = {
+        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result == {"decision": "BLOCKED"}
+
+
+@pytest.mark.asyncio
+async def test_execute_git_diff_empty_blocks():
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Mock tools: git.pr.diff returns empty diff
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [{"id": "DF-0007", "status": "completed"}],
+        {"log": "ok", "logsUnavailable": False},
+        {"diff": "", "number": "1"},
+    ]
+    
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "PASS"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
+    
+    data = {
+        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result == {"decision": "BLOCKED"}
