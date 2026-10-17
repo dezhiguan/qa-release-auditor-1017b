@@ -4,46 +4,77 @@ from typing import Dict, Any, List
 
 
 def _parse_repo(text: str) -> str:
-    # Match "仓库 <slug>" or "repo <slug>" at word boundary; prefer explicit prefix
-    # Allow repo slug like "org/repo" or "repo-name", max 79 chars, no leading/trailing hyphens
-    m = re.search(r"(?:仓库|repo)\s+([a-zA-Z0-9][a-zA-Z0-9\-]{0,38}/[a-zA-Z0-9][a-zA-Z0-9\-]{0,38}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,78})(?:[\s\.,;]|$)", text)
-    if m:
-        candidate = m.group(1)
-        # Reject jobId-like (DF-\d+) or pure digits or empty
-        if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit() or not candidate.strip():
-            return None
-        return candidate.strip()
+    # Match "仓库 <slug>" or "repo <slug>" — allow Chinese/ASCII delimiters: 、，。；
+    # Also support bare slug after colon or equal sign, e.g. "repo=qa-release-checker-1017"
+    # Reject jobId-like (DF-\d+) or pure digits or empty
+    patterns = [
+        r"(?:仓库|repo)[\s：:＝=]+([a-zA-Z0-9][a-zA-Z0-9\-]{0,38}/[a-zA-Z0-9][a-zA-Z0-9\-]{0,38}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,78})[\s\.,;：：；、，。\)]?",
+        r"(?:repo|仓库)=([a-zA-Z0-9][a-zA-Z0-9\-]{0,38}/[a-zA-Z0-9][a-zA-Z0-9\-]{0,38}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,78})",
+        r"(?:repo|仓库):([a-zA-Z0-9][a-zA-Z0-9\-]{0,38}/[a-zA-Z0-9][a-zA-Z0-9\-]{0,38}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,78})"
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            candidate = m.group(1).strip()
+            if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit() or not candidate:
+                continue
+            return candidate
     return None
 
 
 def _parse_runid(text: str) -> str:
-    # Must be nonempty string; match digits only after "runId" or "CI runId"
-    # Do NOT match PR number context (e.g., avoid matching "#123" as runId)
-    m = re.search(r"(?i)(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
-    if m:
-        # Ensure it's not embedded in something like "PR #123456789" where digits overlap
-        # Look for absence of '#' before digits in same token context
-        pre = text[:m.start()].rstrip()
-        if pre.endswith('#') or re.search(r'#\s*\d+$', pre[-10:]):
-            return None
-        return m.group(1)
+    # Match 'runId <digits>', 'CI runId <digits>', 'runId=<digits>', 'runId：<digits>'
+    # Allow Chinese/ASCII delimiters: 、，。；：：＝=
+    # Exclude matches inside PR context (e.g., '#123456')
+    patterns = [
+        r"(?i)(?:CI\s+)?runId[\s：:＝=]+(\d+)(?:[\s\.,;：；、，。\)]?)",
+        r"(?i)(?:CI\s+)?runId=(\d+)",
+        r"(?i)(?:CI\s+)?runId：(\d+)"
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            # Guard against misreading PR number (e.g., 'PR #123456' → '123456' as runId)
+            start, end = m.span(1)
+            pre_context = text[max(0, start-10):start]
+            if '#' in pre_context or re.search(r'#\s*\d+$', pre_context):
+                continue
+            return m.group(1)
     return None
 
 
 def _parse_pr_number(text: str) -> str:
-    # Strict: only "PR #<digits>", "PR <digits>", or "#<digits>" — no overlap with runId
-    # Prefer explicit "PR" or "#" prefix to avoid numeric collision
-    m = re.search(r"(?i)(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
-    return m.group(1) if m else None
+    # Match 'PR #<digits>', 'PR <digits>', '#<digits>', 'PR：<digits>', 'PR=<digits>'
+    # Allow Chinese/ASCII delimiters: 、，。；：：＝=
+    # Avoid overlapping with runId by requiring clear PR context or # prefix
+    patterns = [
+        r"(?i)(?:PR[\s：:＝=]+#|PR[\s：:＝=]+|#)(\d+)(?:[\s\.,;：；、，。\)]?)",
+        r"(?i)PR[\s：:＝=]+(\d+)(?:[\s\.,;：；、，。\)]?)",
+        r"(?i)PR=(\d+)",
+        r"(?i)PR：(\d+)"
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1)
+    return None
 
 
 def _parse_jobid(text: str) -> str:
-    # Exact DF-\d+ with word boundaries; reject suffixes like DF-0007x or DF-0007-
-    m = re.search(r"\b(DF-\d+)\b", text)
-    if m:
-        candidate = m.group(1)
-        if re.fullmatch(r"DF-\d+", candidate):
-            return candidate
+    # Match '任务 DF-\d+', 'jobId DF-\d+', 'DF-\d+', 'jobId=<DF-\d+>', '任务：<DF-\d+>'
+    # Allow Chinese/ASCII delimiters: 、，。；：：＝=
+    patterns = [
+        r"(?:任务|jobId)[\s：:＝=]+(DF-\d+)(?:[\s\.,;：；、，。\)]?)",
+        r"(?:任务|jobId)=(DF-\d+)",
+        r"(?:任务|jobId)：(DF-\d+)",
+        r"\b(DF-\d+)\b"
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            candidate = m.group(1) if len(m.groups()) >= 1 else m.group(0)
+            if re.fullmatch(r"DF-\d+", candidate):
+                return candidate
     return None
 
 
@@ -57,14 +88,15 @@ async def execute(data: dict, ctx) -> dict:
     number_str = _parse_pr_number(text)
     jobId = _parse_jobid(text)
 
+    # Validate all four identifiers are present and non-empty
     missing = []
-    if not repo:
+    if not isinstance(repo, str) or not repo.strip():
         missing.append("repo")
-    if not runId:
+    if not isinstance(runId, str) or not runId.strip():
         missing.append("runId")
-    if not number_str:
+    if not isinstance(number_str, str) or not number_str.strip():
         missing.append("PR number")
-    if not jobId:
+    if not isinstance(jobId, str) or not jobId.strip():
         missing.append("jobId")
     if missing:
         return {"decision": "BLOCKED"}

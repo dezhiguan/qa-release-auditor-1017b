@@ -11,11 +11,16 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 
 async def _invoke_child(name: str, text: str, budget: dict, trace_id: str):
-    endpoint = f"http://{name}.agents.svc.cluster.local:8000/v1/invoke"
-    headers = {"X-Keel-Agent": name, "X-Keel-Env": os.environ["KEEL_ENV"]}
+    route = json.loads(os.environ.get("KEEL_DELEGATE_ROUTES", "{}" )).get(name)
+    if not isinstance(route, dict) or route.get("env") not in {"dev", "test", "staging", "prod"}:
+        raise RuntimeError(f"委派 {name} 缺少明确的环境路由，请配置 KEEL_DELEGATE_ROUTES")
+    endpoint = str(route.get("endpoint") or "").rstrip("/") + "/v1/invoke"
+    if not endpoint.startswith(("http://", "https://")):
+        raise RuntimeError(f"委派 {name} 缺少登记 endpoint")
+    headers = {"X-Keel-Agent": name, "X-Keel-Env": route["env"]}
     TraceContextTextMapPropagator().inject(headers)
-    async with httpx.AsyncClient(timeout=45) as client:
-        response = await client.post(endpoint, json={"input": {"text": text, "evidenceOnly": True}}, headers=headers)
+    async with httpx.AsyncClient(timeout=180) as client:
+        response = await client.post(endpoint, json={"input": {"text": text}}, headers=headers)
         response.raise_for_status()
     for block in response.text.split("\n\n"):
         if "event: final" not in block:
