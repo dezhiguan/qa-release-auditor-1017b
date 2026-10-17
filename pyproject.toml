@@ -1,0 +1,8 @@
+[project]
+name = "qa-release-auditor-1017b"
+version = "0.1.0"
+description = "Independent Keel agent project"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
