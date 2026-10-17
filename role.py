@@ -4,26 +4,40 @@ from typing import Dict, Any, List
 
 
 def _parse_repo(text: str) -> str:
+    # Match "仓库 <slug>" or "repo <slug>" at word boundary
     m = re.search(r"(?:仓库|repo)\s+([\w\-]+)(?:[\s\.,;]|$)", text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # Fallback: standalone slug-like pattern preceded by whitespace or start
+    m = re.search(r"(^|\s)([a-z0-9][a-z0-9\-]{1,39}/[a-z0-9][a-z0-9\-]{1,39}|[a-z0-9][a-z0-9\-]{1,79})(?=\s|$|\.)", text)
+    if m:
+        return m.group(2)
+    return None
+
 
 def _parse_runid(text: str) -> str:
+    # Must be nonempty string, not int; match digits only after "runId" or "CI runId"
     m = re.search(r"(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
     return m.group(1) if m else None
 
+
 def _parse_pr_number(text: str) -> str:
-    # Match "PR #<digits>" or "PR <digits>" or "#<digits>" — only at word boundary after PR/#
+    # Strict: only "PR #<digits>", "PR <digits>", or "#<digits>" — no runId cross-match
     m = re.search(r"(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
-    if not m:
-        m = re.search(r"PR\s+(\d+)(?:[\s\.,;]|$)", text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    return None
+
 
 def _parse_jobid(text: str) -> str:
-    # Exact DF-\d+ match, surrounded by whitespace or punctuation
-    m = re.search(r"(?:任务|jobId)\s+(DF-\d+)(?:[\s\.,;]|$)", text)
-    if not m:
-        m = re.search(r"\b(DF-\d+)\b", text)
-    return m.group(1) if m else None
+    # Exact DF-\d+ with word boundaries; reject suffixes like DF-0007x
+    m = re.search(r"\b(DF-\d+)\b", text)
+    if m:
+        candidate = m.group(1)
+        # Verify it's *exactly* DF-<digits>, no trailing chars
+        if re.fullmatch(r"DF-\d+", candidate):
+            return candidate
+    return None
 
 
 async def execute(data: dict, ctx) -> dict:
