@@ -34,14 +34,18 @@ async def execute(data: dict, ctx) -> dict:
         return {"decision": "BLOCKED"}
     
     # Collect evidence from tools
-    evidence = {}
+    evidence_sources = []
+    steps = []
     
     # Call devflow.job.read
     try:
         job_result = await ctx.tools.call("devflow.job.read", jobId=jobId)
         if not isinstance(job_result, list):
             raise TypeError("devflow.job.read must return list")
-        evidence["devflow.job.read"] = job_result
+        evidence_sources.append({"tool": "devflow.job.read", "result": job_result})
+        steps.append(f"devflow.job.read(jobId='{jobId}') → {len(job_result)} record(s)")
+        if len(job_result) == 0:
+            return {"decision": "BLOCKED"}
     except Exception:
         return {"decision": "BLOCKED"}
     
@@ -53,7 +57,8 @@ async def execute(data: dict, ctx) -> dict:
         # Check for missing or invalid log evidence per contract
         if not isinstance(ci_result.get("log"), str) or len(ci_result.get("log", "")) == 0 or ci_result.get("logsUnavailable") is True:
             return {"decision": "BLOCKED"}
-        evidence["ci.log.fetch"] = ci_result
+        evidence_sources.append({"tool": "ci.log.fetch", "result": ci_result})
+        steps.append(f"ci.log.fetch(repo='{repo}', runId='{runId}') → log length {len(ci_result['log'])}")
     except Exception:
         return {"decision": "BLOCKED"}
     
@@ -65,7 +70,8 @@ async def execute(data: dict, ctx) -> dict:
         # Check for missing or invalid diff evidence per contract
         if not isinstance(pr_result.get("diff"), str) or len(pr_result.get("diff", "")) == 0:
             return {"decision": "BLOCKED"}
-        evidence["git.pr.diff"] = pr_result
+        evidence_sources.append({"tool": "git.pr.diff", "result": pr_result})
+        steps.append(f"git.pr.diff(repo='{repo}', number='{number}') → diff length {len(pr_result['diff'])}")
     except Exception:
         return {"decision": "BLOCKED"}
     
@@ -90,15 +96,19 @@ async def execute(data: dict, ctx) -> dict:
             if result is None:
                 return {"decision": "BLOCKED"}
             delegate_results.append({"agent": name, "result": result})
+            steps.append(f"delegate('{name}') → result type {type(result).__name__}")
         except Exception:
             return {"decision": "BLOCKED"}
-    
-    evidence["delegates"] = delegate_results
     
     # Load and compile prompt
     try:
         prompt = await ctx.prompt("role")
-        compiled = prompt.compile(input=text, evidence=json.dumps(evidence, ensure_ascii=False))
+        # Serialize evidence for prompt — keep raw tool outputs + delegates
+        evidence_payload = {
+            "evidence_sources": evidence_sources,
+            "delegate_results": delegate_results
+        }
+        compiled = prompt.compile(input=text, evidence=json.dumps(evidence_payload, ensure_ascii=False))
     except Exception:
         return {"decision": "BLOCKED"}
     
@@ -116,7 +126,12 @@ async def execute(data: dict, ctx) -> dict:
         if isinstance(parsed, dict) and "decision" in parsed:
             decision = parsed["decision"]
             if decision == "PASS" or decision == "BLOCKED":
-                return {"decision": decision}
+                return {
+                    "decision": decision,
+                    "evidence_sources": evidence_sources,
+                    "delegate_results": delegate_results,
+                    "steps": steps
+                }
     except json.JSONDecodeError:
         pass
     
@@ -124,6 +139,16 @@ async def execute(data: dict, ctx) -> dict:
     decision_match = re.search(r'"decision"\s*:\s*"(PASS|BLOCKED)"', llm_response)
     if decision_match:
         decision = decision_match.group(1)
-        return {"decision": decision}
+        return {
+            "decision": decision,
+            "evidence_sources": evidence_sources,
+            "delegate_results": delegate_results,
+            "steps": steps
+        }
     
-    return {"decision": "BLOCKED"}
+    return {
+        "decision": "BLOCKED",
+        "evidence_sources": evidence_sources,
+        "delegate_results": delegate_results,
+        "steps": steps
+    }

@@ -46,8 +46,14 @@ async def test_execute_normal_flow():
     # Execute
     result = await execute(data, ctx)
     
-    # Assert
-    assert result == {"decision": "PASS"}
+    # Assert full structure
+    assert result["decision"] == "PASS"
+    assert isinstance(result.get("evidence_sources"), list)
+    assert len(result["evidence_sources"]) >= 2
+    assert isinstance(result.get("delegate_results"), list)
+    assert len(result["delegate_results"]) == 2
+    assert isinstance(result.get("steps"), list)
+    assert len(result["steps"]) > 0
 
 
 @pytest.mark.asyncio
@@ -97,7 +103,7 @@ async def test_execute_llm_returns_blocked_stays_blocked():
     
     result = await execute(data, ctx)
     
-    assert result == {"decision": "BLOCKED"}
+    assert result["decision"] == "BLOCKED"
 
 
 @pytest.mark.asyncio
@@ -131,7 +137,7 @@ async def test_execute_child_blocked_remains_blocked():
     
     result = await execute(data, ctx)
     
-    assert result == {"decision": "BLOCKED"}
+    assert result["decision"] == "BLOCKED"
 
 
 @pytest.mark.asyncio
@@ -164,7 +170,7 @@ async def test_execute_ci_log_unavailable_blocks():
     
     result = await execute(data, ctx)
     
-    assert result == {"decision": "BLOCKED"}
+    assert result["decision"] == "BLOCKED"
 
 
 @pytest.mark.asyncio
@@ -197,4 +203,37 @@ async def test_execute_git_diff_empty_blocks():
     
     result = await execute(data, ctx)
     
-    assert result == {"decision": "BLOCKED"}
+    assert result["decision"] == "BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_execute_devflow_job_empty_blocks():
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Mock tools: devflow.job.read returns empty list
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [],
+        {"log": "ok", "logsUnavailable": False},
+        {"diff": "x", "number": "1"},
+    ]
+    
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "PASS"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
+    
+    data = {
+        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result["decision"] == "BLOCKED"

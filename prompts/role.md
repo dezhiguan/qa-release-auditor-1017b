@@ -7,8 +7,7 @@
   - `devflow.job.read(jobId)` → 返回 job 记录列表；空列表 = 无证据
   - `ci.log.fetch(repo, runId)` → 返回 `{log: "...", logsUnavailable?: bool}`；缺失 `log`、`log` 为空字符串、或 `logsUnavailable==true` = 无证据
   - `git.pr.diff(repo, number)` → 返回 `{diff: "...", number: "..."}`；缺失 `diff` 或 `diff` 为空字符串 = 无证据
-- 分步核对所有工具返回内容与子智能体意见：任一必需证据缺失、为空、格式不符、或子智能体返回 `decision: BLOCKED`，则最终结论必须为 `BLOCKED`。
-- 输出必须包含：子智能体意见摘要、各工具原始证据片段、逐步核对记录、以及**结构化**的 `decision` 字段（仅允许 `"PASS"` 或 `"BLOCKED"`）。
+- 分步核对所有工具返回内容与子智能体意见：任一必需证据缺失、为空、格式不符、或子智能体任一结果为 `decision: BLOCKED`，则最终结论必须为 `BLOCKED`。
 
 ## 输入约束
 {{input}}
@@ -17,11 +16,11 @@
 {{evidence}}
 
 ## 输出要求
-- 严格 JSON 格式，顶层仅含 `decision` 字段（字符串值，精确为 `"PASS"` 或 `"BLOCKED"`）。
-- 不得添加额外字段（如 `reason`, `details`, `explanation`）。
+- 严格 JSON 格式，顶层**仅含 `decision` 字段**（字符串值，精确为 `"PASS"` 或 `"BLOCKED"`）。
+- 不得添加任何额外字段（如 `reason`, `details`, `explanation`, `evidence_sources`, `delegate_results`, `steps`）。
 - 不得自行合并、发布、批准或绕过人工评审。
 - 若证据存在矛盾、缺失、空值、或子智能体任一结果为 `BLOCKED`，必须输出 `"BLOCKED"`。
 - 绝不将 `UNKNOWN`、`PENDING`、`TIMEOUT`、`NOT_FOUND`、`logsUnavailable: true` 或空 diff/log/job 列表解释为通过。
 - 所有判断必须基于上述证据，禁止引入外部 knowledge 或 assumptions。
 
-请直接输出 JSON：
+请 output **only valid JSON object with exactly one key: `decision`**, e.g. `{"decision": "PASS"}` or `{"decision": "BLOCKED"}`.
