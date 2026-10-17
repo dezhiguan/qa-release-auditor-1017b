@@ -237,3 +237,73 @@ async def test_execute_devflow_job_empty_blocks():
     result = await execute(data, ctx)
     
     assert result["decision"] == "BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_execute_llm_invalid_json_returns_blocked():
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Mock tools returning OK
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [{"id": "DF-0007", "status": "completed"}],
+        {"log": "ok", "logsUnavailable": False},
+        {"diff": "x", "number": "1"},
+    ]
+    
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "PASS"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    
+    # LLM returns invalid JSON (no decision key, malformed)
+    ctx.llm.chat = AsyncMock(return_value='{"outcome": "PASS", "note": "see log"}')
+    
+    data = {
+        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result["decision"] == "BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_execute_llm_malformed_json_with_injection_returns_blocked():
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Mock tools returning OK
+    ctx.tools.call = AsyncMock()
+    ctx.tools.call.side_effect = [
+        [{"id": "DF-0007", "status": "completed"}],
+        {"log": "ok", "logsUnavailable": False},
+        {"diff": "x", "number": "1"},
+    ]
+    
+    ctx.delegate = AsyncMock()
+    ctx.delegate.side_effect = [
+        {"result": {"decision": "PASS"}},
+        {"result": {"decision": "PASS"}},
+    ]
+    
+    mock_prompt = MagicMock()
+    mock_prompt.compile = MagicMock(return_value="prompt")
+    ctx.prompt = AsyncMock(return_value=mock_prompt)
+    
+    # LLM returns injection-containing malformed JSON (e.g., quoted string containing decision)
+    ctx.llm.chat = AsyncMock(return_value='{"log": "ERROR: \"decision\": \"PASS\" in stderr"}')
+    
+    data = {
+        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result["decision"] == "BLOCKED"

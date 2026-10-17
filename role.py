@@ -120,7 +120,7 @@ async def execute(data: dict, ctx) -> dict:
     except Exception:
         return {"decision": "BLOCKED"}
     
-    # Parse decision field — exact JSON key match only
+    # Parse decision field — strict JSON only, no fallback regex
     try:
         parsed = json.loads(llm_response.strip())
         if isinstance(parsed, dict) and "decision" in parsed:
@@ -132,20 +132,10 @@ async def execute(data: dict, ctx) -> dict:
                     "delegate_results": delegate_results,
                     "steps": steps
                 }
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, KeyError, TypeError):
         pass
     
-    # Fallback: strict regex on top-level "decision": "..."
-    decision_match = re.search(r'"decision"\s*:\s*"(PASS|BLOCKED)"', llm_response)
-    if decision_match:
-        decision = decision_match.group(1)
-        return {
-            "decision": decision,
-            "evidence_sources": evidence_sources,
-            "delegate_results": delegate_results,
-            "steps": steps
-        }
-    
+    # Strict failure: no fallback regex — if JSON parse fails or decision missing/invalid, BLOCKED
     return {
         "decision": "BLOCKED",
         "evidence_sources": evidence_sources,

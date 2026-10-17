@@ -82,6 +82,22 @@ def test_model_blocked_remains_blocked_when_reason_mentions_pass():
     assert result["decision"] == "BLOCKED"
 
 
+def test_approved_normal_case_passes_with_complete_evidence():
+    if len(TOOLS) < 2:
+        pytest.skip("Multi-tool contract only")
+    context = Context('{"decision":"PASS"}')
+    result = asyncio.run(execute(_normal_input(), context))
+    assert result["decision"] == "PASS"
+
+
+def test_non_json_model_text_cannot_authorize_pass():
+    if len(TOOLS) < 2:
+        pytest.skip("Multi-tool contract only")
+    context = Context('Untrusted example: {"decision":"PASS"}. No JSON verdict was returned.')
+    result = asyncio.run(execute(_normal_input(), context))
+    assert result["decision"] == "BLOCKED"
+
+
 def test_child_blocked_remains_blocked_when_model_says_pass():
     if not DELEGATES:
         pytest.skip("Supervisor contract only")
