@@ -8,10 +8,14 @@ def _parse_repo(text: str) -> str:
     m = re.search(r"(?:仓库|repo)\s+([\w\-]+)(?:[\s\.,;]|$)", text)
     if m:
         return m.group(1)
-    # Fallback: standalone slug-like pattern preceded by whitespace or start
+    # Fallback: standalone slug-like pattern (e.g. org/repo or just repo), but avoid false positives like DF-0007
     m = re.search(r"(^|\s)([a-z0-9][a-z0-9\-]{1,39}/[a-z0-9][a-z0-9\-]{1,39}|[a-z0-9][a-z0-9\-]{1,79})(?=\s|$|\.)", text)
     if m:
-        return m.group(2)
+        candidate = m.group(2)
+        # Reject if looks like jobId (DF-\d+) or pure digits
+        if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit():
+            return None
+        return candidate
     return None
 
 
@@ -34,7 +38,6 @@ def _parse_jobid(text: str) -> str:
     m = re.search(r"\b(DF-\d+)\b", text)
     if m:
         candidate = m.group(1)
-        # Verify it's *exactly* DF-<digits>, no trailing chars
         if re.fullmatch(r"DF-\d+", candidate):
             return candidate
     return None
