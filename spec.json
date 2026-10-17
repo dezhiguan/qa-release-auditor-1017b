@@ -1,0 +1,16 @@
+{
+  "io": "输入由调用者明确提供 repo、CI runId、PR number、jobId；例如 repo=qa-release-auditor-1017、runId=39010072606、PR #1、jobId=DF-0009。输出子智能体意见、工具证据、逐步核对记录和结构化 decision。不得猜测对象标识。",
+  "goal": "协调两个已授权子智能体分别审查研发任务和风险材料，同时调用真实任务、CI 与 PR 只读工具，分步核对证据，形成可追溯的发布准备结论；任一证据缺失则阻塞。",
+  "risks": [
+    "子智能体响应超时或拒绝委派导致流程中断",
+    "CI runId 或 PR number 解析错误导致工具调用失败",
+    "devflow.job.read 返回空或过期任务状态引发误判"
+  ],
+  "title": "协作式发布证据审计员（重建）",
+  "users": "研发负责人对独立项目发布前的任务、构建、代码差异和风险做多角色协作核查。",
+  "pending": [
+    "需确认 qa-devops-investigator-1017 和 qa-policy-advisor-1017 的当前可用性与权限范围",
+    "需确认 DF-0009 对应的 jobId 是否在 devflow 系统中存在且状态为 'completed'"
+  ],
+  "success": "从清单读取并实际委派两个子智能体，解析返回封装；调用 devflow.job.read(jobId)、ci.log.fetch(repo,runId)、git.pr.diff(repo,number) 至少两种。任何委派或工具失败、对象标识缺失、证据不一致都 BLOCKED。提示词定义职责、输入输出、证据边界和人工评审要求；不自行合并发布。"
+}
