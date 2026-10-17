@@ -33,8 +33,10 @@ class Prompt:
 class Tools:
     def __init__(self, overrides=None):
         self.overrides = overrides or {}
+        self.calls = []
 
     async def call(self, name, **kwargs):
+        self.calls.append((name, kwargs))
         if name in {"ci.log.fetch", "git.pr.diff"}:
             assert isinstance(kwargs.get("repo"), str) and kwargs["repo"].strip(), "repo must be a slug string"
         if name == "git.pr.diff":
@@ -94,6 +96,18 @@ def test_approved_normal_case_passes_with_complete_evidence():
     context = Context('{"decision":"PASS"}')
     result = asyncio.run(execute(_normal_input(), context))
     assert result["decision"] == "PASS", result
+
+
+def test_evidence_tools_receive_the_explicit_identifiers_without_numeric_cross_talk():
+    if not {"ci.log.fetch", "git.pr.diff", "devflow.job.read"}.issubset(TOOLS):
+        pytest.skip("Evidence audit contract only")
+    context = Context('{"decision":"PASS"}')
+    result = asyncio.run(execute({"text": "请核验仓库 qa-evidence-7392 的 CI runId 987654321、PR #17、任务 DF-1234，返回证据。"}, context))
+    assert result["decision"] == "PASS", result
+    calls = dict(context.tools.calls)
+    assert calls["ci.log.fetch"] == {"repo": "qa-evidence-7392", "runId": "987654321"}
+    assert calls["git.pr.diff"] == {"repo": "qa-evidence-7392", "number": 17}
+    assert calls["devflow.job.read"] == {"jobId": "DF-1234"}
 
 
 def test_non_json_model_text_cannot_authorize_pass():

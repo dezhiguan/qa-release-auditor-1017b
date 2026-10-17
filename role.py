@@ -3,44 +3,56 @@ import re
 from typing import Dict, Any, List
 
 
+def _parse_repo(text: str) -> str:
+    m = re.search(r"(?:仓库|repo)\s+([\w\-]+)(?:[\s\.,;]|$)", text)
+    return m.group(1) if m else None
+
+def _parse_runid(text: str) -> str:
+    m = re.search(r"(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
+    return m.group(1) if m else None
+
+def _parse_pr_number(text: str) -> str:
+    # Match "PR #<digits>" or "PR <digits>" or "#<digits>" — only at word boundary after PR/#
+    m = re.search(r"(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
+    if not m:
+        m = re.search(r"PR\s+(\d+)(?:[\s\.,;]|$)", text)
+    return m.group(1) if m else None
+
+def _parse_jobid(text: str) -> str:
+    # Exact DF-\d+ match, surrounded by whitespace or punctuation
+    m = re.search(r"(?:任务|jobId)\s+(DF-\d+)(?:[\s\.,;]|$)", text)
+    if not m:
+        m = re.search(r"\b(DF-\d+)\b", text)
+    return m.group(1) if m else None
+
+
 async def execute(data: dict, ctx) -> dict:
-    # Parse input text for required identifiers — H2 cases all use data.text
     text = data.get("text", "")
     if not isinstance(text, str):
         return {"decision": "BLOCKED"}
-    
-    # Extract repo: match "仓库 <slug>" or fallback to "repo <slug>" (per H2 examples)
-    repo_match = re.search(r"(?:仓库|repo)\s+([\w\-]+)", text)
-    # Extract runId: "CI runId <digits>" or "runId <digits>"
-    runId_match = re.search(r"(?:CI\s+)?runId\s+(\d+)", text)
-    # Extract PR number: "PR #<digits>" or "PR <digits>" or "#<digits>"
-    pr_match = re.search(r"(?:PR\s+)?#?(\d+)\b", text)
-    # Extract jobId: "任务 <DF-\d+>" or "jobId <DF-\d+>" or "DF-\d+"
-    jobId_match = re.search(r"(?:任务|jobId|DF-)\s*(DF-\d+)", text)
-    
-    repo = repo_match.group(1) if repo_match else None
-    runId = runId_match.group(1) if runId_match else None
-    number = pr_match.group(1) if pr_match else None
-    jobId = jobId_match.group(1) if jobId_match else None
-    
-    # Block if any required identifier is missing
+
+    repo = _parse_repo(text)
+    runId = _parse_runid(text)
+    number_str = _parse_pr_number(text)
+    jobId = _parse_jobid(text)
+
     missing = []
     if not repo:
         missing.append("repo")
     if not runId:
         missing.append("runId")
-    if not number:
+    if not number_str:
         missing.append("PR number")
     if not jobId:
         missing.append("jobId")
     if missing:
         return {"decision": "BLOCKED"}
-    
-    # Collect evidence from tools
+
     evidence_sources = []
     steps = []
-    
-    # Call devflow.job.read
+    delegate_results = []
+
+    # devflow.job.read
     try:
         job_result = await ctx.tools.call("devflow.job.read", jobId=jobId)
         if not isinstance(job_result, list):
@@ -51,44 +63,44 @@ async def execute(data: dict, ctx) -> dict:
             return {"decision": "BLOCKED"}
     except Exception:
         return {"decision": "BLOCKED"}
-    
-    # Call ci.log.fetch
+
+    # ci.log.fetch
     try:
         ci_result = await ctx.tools.call("ci.log.fetch", repo=repo, runId=runId)
         if not isinstance(ci_result, dict):
             raise TypeError("ci.log.fetch must return dict")
-        # Per contract: log must be non-empty string; logsUnavailable=True blocks
-        if not isinstance(ci_result.get("log"), str) or len(ci_result.get("log", "")) == 0 or ci_result.get("logsUnavailable") is True:
+        log_val = ci_result.get("log")
+        if not isinstance(log_val, str) or len(log_val.strip()) == 0 or ci_result.get("logsUnavailable") is True:
             return {"decision": "BLOCKED"}
         evidence_sources.append({"tool": "ci.log.fetch", "result": ci_result})
-        steps.append(f"ci.log.fetch(repo='{repo}', runId='{runId}') → log length {len(ci_result['log'])}")
+        steps.append(f"ci.log.fetch(repo='{repo}', runId='{runId}') → log length {len(log_val)}")
     except Exception:
         return {"decision": "BLOCKED"}
-    
-    # Call git.pr.diff — number must be int per contract
+
+    # git.pr.diff — cast number to int per contract
     try:
-        pr_number_int = int(number)
-        pr_result = await ctx.tools.call("git.pr.diff", repo=repo, number=pr_number_int)
+        pr_number = int(number_str)
+        pr_result = await ctx.tools.call("git.pr.diff", repo=repo, number=pr_number)
         if not isinstance(pr_result, dict):
             raise TypeError("git.pr.diff must return dict")
-        if not isinstance(pr_result.get("diff"), str) or len(pr_result.get("diff", "")) == 0:
+        diff_val = pr_result.get("diff")
+        if not isinstance(diff_val, str) or len(diff_val.strip()) == 0:
             return {"decision": "BLOCKED"}
         evidence_sources.append({"tool": "git.pr.diff", "result": pr_result})
-        steps.append(f"git.pr.diff(repo='{repo}', number='{pr_number_int}') → diff length {len(pr_result['diff'])}")
+        steps.append(f"git.pr.diff(repo='{repo}', number='{pr_number}') → diff length {len(diff_val)}")
     except (ValueError, Exception):
         return {"decision": "BLOCKED"}
-    
-    # Delegate to two authorized sub-agents
+
+    # Delegate to exactly two authorized agents
     allowed_delegates = list(ctx.manifest.spec.delegates or [])
     if len(allowed_delegates) < 2:
         return {"decision": "BLOCKED"}
-    
-    delegate_results = []
+
     for name in allowed_delegates[:2]:
         try:
             delegate_resp = await ctx.delegate(name, text)
             if not isinstance(delegate_resp, dict) or "result" not in delegate_resp:
-                raise ValueError(f"invalid delegate response from {name}")
+                return {"decision": "BLOCKED"}
             result = delegate_resp["result"]
             # Block on any sub-agent returning decision: BLOCKED, or empty/None result
             if isinstance(result, dict) and result.get("decision") == "BLOCKED":
@@ -101,8 +113,8 @@ async def execute(data: dict, ctx) -> dict:
             steps.append(f"delegate('{name}') → result type {type(result).__name__}")
         except Exception:
             return {"decision": "BLOCKED"}
-    
-    # Load prompt and compile with raw evidence
+
+    # Compile prompt with evidence
     try:
         prompt = await ctx.prompt("role")
         evidence_payload = {
@@ -112,16 +124,16 @@ async def execute(data: dict, ctx) -> dict:
         compiled = prompt.compile(input=text, evidence=json.dumps(evidence_payload, ensure_ascii=False))
     except Exception:
         return {"decision": "BLOCKED"}
-    
-    # Query LLM
+
+    # LLM call
     try:
         llm_response = await ctx.llm.chat([
             {"role": "user", "content": compiled}
         ], prompt=prompt)
     except Exception:
         return {"decision": "BLOCKED"}
-    
-    # Strict JSON parse + decision validation
+
+    # Parse and validate decision
     try:
         parsed = json.loads(llm_response.strip())
         if isinstance(parsed, dict) and "decision" in parsed:
@@ -135,7 +147,7 @@ async def execute(data: dict, ctx) -> dict:
                 }
     except (json.JSONDecodeError, KeyError, TypeError):
         pass
-    
+
     return {
         "decision": "BLOCKED",
         "evidence_sources": evidence_sources,

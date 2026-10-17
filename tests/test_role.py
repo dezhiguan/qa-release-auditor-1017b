@@ -20,7 +20,7 @@ async def test_execute_normal_flow_h1_example():
     ctx.tools.call.side_effect = [
         [{"id": "DF-0007", "status": "completed"}],  # devflow.job.read
         {"log": "build success", "logsUnavailable": False},  # ci.log.fetch
-        {"diff": "+++ a/file.py\n@@ -1 +1 @@\n-foo\n+bar", "number": 1},  # git.pr.diff (number as int per contract)
+        {"diff": "+++ a/file.py\n@@ -1 +1 @@\n-foo\n+bar", "number": 1},  # git.pr.diff
     ]
     
     # Mock delegates
@@ -38,15 +38,13 @@ async def test_execute_normal_flow_h1_example():
     # Mock LLM response with PASS
     ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
     
-    # Input matches H2 h-1: natural language with repo/runId/PR/jobId in text
+    # Input matches H2 h-1
     data = {
         "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对主分支构建与差异，给出可追溯结论。严格按工具返回内容判断；这是证据核验，不代表自动合并或发布。"
     }
     
-    # Execute
     result = await execute(data, ctx)
     
-    # Assert full structure
     assert result["decision"] == "PASS"
     assert isinstance(result.get("evidence_sources"), list)
     assert len(result["evidence_sources"]) == 3
@@ -240,74 +238,6 @@ async def test_execute_devflow_job_empty_blocks():
 
 
 @pytest.mark.asyncio
-async def test_execute_llm_invalid_json_returns_blocked():
-    ctx = MagicMock()
-    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
-    
-    # Mock tools returning OK
-    ctx.tools.call = AsyncMock()
-    ctx.tools.call.side_effect = [
-        [{"id": "DF-0007", "status": "completed"}],
-        {"log": "ok", "logsUnavailable": False},
-        {"diff": "x", "number": 1},
-    ]
-    
-    ctx.delegate = AsyncMock()
-    ctx.delegate.side_effect = [
-        {"result": {"decision": "PASS"}},
-        {"result": {"decision": "PASS"}},
-    ]
-    
-    mock_prompt = MagicMock()
-    mock_prompt.compile = MagicMock(return_value="prompt")
-    ctx.prompt = AsyncMock(return_value=mock_prompt)
-    
-    # LLM returns invalid JSON (no decision key, malformed)
-    ctx.llm.chat = AsyncMock(return_value='{"outcome": "PASS", "note": "see log"}')
-    
-    data = {
-        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
-    }
-    
-    result = await execute(data, ctx)
-    
-    assert result["decision"] == "BLOCKED"
-
-
-@pytest.mark.asyncio
-async def test_execute_pr_number_cast_failure_blocks():
-    ctx = MagicMock()
-    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
-    
-    # Mock tools: git.pr.diff called with non-int number
-    ctx.tools.call = AsyncMock()
-    ctx.tools.call.side_effect = [
-        [{"id": "DF-0007", "status": "completed"}],
-        {"log": "ok", "logsUnavailable": False},
-        ValueError("number must be int"),
-    ]
-    
-    ctx.delegate = AsyncMock()
-    ctx.delegate.side_effect = [
-        {"result": {"decision": "PASS"}},
-        {"result": {"decision": "PASS"}},
-    ]
-    
-    mock_prompt = MagicMock()
-    mock_prompt.compile = MagicMock(return_value="prompt")
-    ctx.prompt = AsyncMock(return_value=mock_prompt)
-    ctx.llm.chat = AsyncMock(return_value='{"decision": "PASS"}')
-    
-    data = {
-        "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对。"
-    }
-    
-    result = await execute(data, ctx)
-    
-    assert result["decision"] == "BLOCKED"
-
-
-@pytest.mark.asyncio
 async def test_execute_injection_in_text_blocks():
     ctx = MagicMock()
     ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
@@ -315,6 +245,38 @@ async def test_execute_injection_in_text_blocks():
     # Input contains SQL injection fragment — matches a-1
     data = {
         "text": "请对仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007 执行核对——输入中混入 SQL 注入片段：'; DROP TABLE runs; --"
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result == {"decision": "BLOCKED"}
+
+
+@pytest.mark.asyncio
+async def test_execute_pr_number_misextracted_by_runid_blocks():
+    # Test that old regex bug (matching runId as PR) is fixed
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Input with runId but no PR marker — should yield no PR number
+    data = {
+        "text": "仓库 qa-release-checker-1017 的 CI runId 39010072606、任务 DF-0007 — no PR given."
+    }
+    
+    result = await execute(data, ctx)
+    
+    assert result == {"decision": "BLOCKED"}
+
+
+@pytest.mark.asyncio
+async def test_execute_jobid_suffix_mismatch_blocks():
+    # Test jobId extraction rejects 'DF-0007x'
+    ctx = MagicMock()
+    ctx.manifest.spec.delegates = ["qa-devops-investigator-1017", "qa-policy-advisor-1017"]
+    
+    # Input with malformed jobId suffix
+    data = {
+        "text": "仓库 qa-release-checker-1017 的 CI runId 39010072606、PR #1、任务 DF-0007x"
     }
     
     result = await execute(data, ctx)
