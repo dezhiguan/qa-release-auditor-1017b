@@ -4,15 +4,11 @@ from typing import Dict, Any, List
 
 
 def _parse_repo(text: str) -> str:
-    # Match "仓库 <slug>" or "repo <slug>" at word boundary
-    m = re.search(r"(?:仓库|repo)\s+([\w\-]+)(?:[\s\.,;]|$)", text)
+    # Match "仓库 <slug>" or "repo <slug>" at word boundary; prefer explicit prefix
+    m = re.search(r"(?:仓库|repo)\s+([a-zA-Z0-9][a-zA-Z0-9\-]{1,39}/[a-zA-Z0-9][a-zA-Z0-9\-]{1,39}|[a-zA-Z0-9][a-zA-Z0-9\-]{1,79})(?:[\s\.,;]|$)", text)
     if m:
-        return m.group(1)
-    # Fallback: standalone slug-like pattern (e.g. org/repo or just repo), but avoid false positives like DF-0007
-    m = re.search(r"(^|\s)([a-z0-9][a-z0-9\-]{1,39}/[a-z0-9][a-z0-9\-]{1,39}|[a-z0-9][a-z0-9\-]{1,79})(?=\s|$|\.)", text)
-    if m:
-        candidate = m.group(2)
-        # Reject if looks like jobId (DF-\d+) or pure digits
+        candidate = m.group(1)
+        # Reject jobId-like (DF-\d+) or pure digits
         if re.fullmatch(r"DF-\d+", candidate) or candidate.isdigit():
             return None
         return candidate
@@ -20,17 +16,15 @@ def _parse_repo(text: str) -> str:
 
 
 def _parse_runid(text: str) -> str:
-    # Must be nonempty string, not int; match digits only after "runId" or "CI runId"
+    # Must be nonempty string; match digits only after "runId" or "CI runId"
     m = re.search(r"(?:CI\s+)?runId\s+(\d+)(?:[\s\.,;]|$)", text)
     return m.group(1) if m else None
 
 
 def _parse_pr_number(text: str) -> str:
-    # Strict: only "PR #<digits>", "PR <digits>", or "#<digits>" — no runId cross-match
+    # Strict: only "PR #<digits>", "PR <digits>", or "#<digits>" — no overlap with runId
     m = re.search(r"(?:PR\s+#|PR\s+|#)(\d+)(?:[\s\.,;]|$)", text)
-    if m:
-        return m.group(1)
-    return None
+    return m.group(1) if m else None
 
 
 def _parse_jobid(text: str) -> str:
